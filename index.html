@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cosmic Collector 🚀</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      user-select: none;
+    }
+
+    body {
+      background-color: #0b0f19;
+      color: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .game-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      height: 640px;
+      background: #050811;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 0 40px rgba(56, 189, 248, 0.25);
+      border: 2px solid #1e293b;
+    }
+
+    .hud {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      padding: 15px 20px;
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 16px;
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      z-index: 5;
+    }
+
+    .score-val { color: #38bdf8; }
+    .high-val { color: #facc15; }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 8, 17, 0.88);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 30px;
+      z-index: 10;
+    }
+
+    .overlay h1 {
+      font-size: 32px;
+      color: #38bdf8;
+      margin-bottom: 10px;
+      text-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
+    }
+
+    .overlay p {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 25px;
+      line-height: 1.6;
+    }
+
+    .btn {
+      padding: 14px 32px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.6);
+    }
+
+    .controls-hint {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="game-wrapper">
+    <!-- Heads Up Display -->
+    <div class="hud">
+      <div>Score: <span id="score" class="score-val">0</span></div>
+      <div>High: <span id="highScore" class="high-val">0</span></div>
+    </div>
+
+    <!-- Main Game Canvas -->
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+
+    <!-- Overlay Menu -->
+    <div class="overlay" id="menuOverlay">
+      <h1 id="menuTitle">Cosmic Collector 🚀</h1>
+      <p id="menuSub">Collect glowing energy orbs ⭐<br>Avoid deadly space debris 🪨</p>
+      <button class="btn" onclick="startGame()">Start Game</button>
+      <div class="controls-hint">Desktop: Left/Right Arrows or A/D<br>Mobile: Drag finger to steer</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // UI Elements
+    const scoreEl = document.getElementById('score');
+    const highScoreEl = document.getElementById('highScore');
+    const menuOverlay = document.getElementById('menuOverlay');
+    const menuTitle = document.getElementById('menuTitle');
+    const menuSub = document.getElementById('menuSub');
+
+    // Game Variables
+    let score = 0;
+    let highScore = localStorage.getItem('cosmic_high_score') || 0;
+    highScoreEl.innerText = highScore;
+
+    let gameActive = false;
+    let player, items, particles, stars;
+    let keys = { left: false, right: false };
+    let touchX = null;
+
+    // Web Audio Synthesizer (No external audio files needed)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playTone(freq, type, duration) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
+    }
+
+    // Initialize Starfield Background
+    function createStars() {
+      stars = [];
+      for (let i = 0; i < 50; i++) {
+        stars.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: Math.random() * 2,
+          speed: 0.5 + Math.random() * 1.5
+        });
+      }
+    }
+
+    // Keyboard & Touch Controls
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
+      if (e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
+      if (e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      touchX = e.touches[0].clientX - rect.left;
+    });
+
+    canvas.addEventListener('touchend', () => { touchX = null; });
+
+    // Start / Restart Game
+    function startGame() {
+      score = 0;
+      scoreEl.innerText = score;
+      gameActive = true;
+      items = [];
+      particles = [];
+      createStars();
+
+      player = {
+        x: canvas.width / 2 - 20,
+        y: canvas.height - 60,
+        width: 40,
+        height: 40,
+        speed: 6
+      };
+
+      menuOverlay.style.display = 'none';
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Spawn Items (Orbs & Debris)
+    function spawnItem() {
+      if (Math.random() < 0.04) {
+        const isOrb = Math.random() > 0.35; // 65% chance for points, 35% for danger
+        items.push({
+          x: Math.random() * (canvas.width - 20),
+          y: -20,
+          size: isOrb ? 12 : 16,
+          isOrb: isOrb,
+          speed: 2 + Math.random() * 3 + (score * 0.05)
+        });
+      }
+    }
+
+    // Particle Effects
+    function addExplosion(x, y, color) {
+      for (let i = 0; i < 12; i++) {
+        particles.push({
+          x: x,
+          y: y,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.5) * 6,
+          size: Math.random() * 4 + 1,
+          color: color,
+          life: 20
+        });
+      }
+    }
+
+    // Main Game Loop
+    function gameLoop() {
+      if (!gameActive) return;
+
+      // 1. Clear Screen
+      ctx.fillStyle = '#050811';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 2. Animate Background Stars
+      ctx.fillStyle = '#ffffff';
+      stars.forEach(s => {
+        s.y += s.speed;
+        if (s.y > canvas.height) s.y = 0;
+        ctx.fillRect(s.x, s.y, s.size, s.size);
+      });
+
+      // 3. Player Movement
+      if (keys.left && player.x > 0) player.x -= player.speed;
+      if (keys.right && player.x < canvas.width - player.width) player.x += player.speed;
+      if (touchX !== null) {
+        player.x = touchX - player.width / 2;
+        if (player.x < 0) player.x = 0;
+        if (player.x > canvas.width - player.width) player.x = canvas.width - player.width;
+      }
+
+      // Draw Player Spaceship
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.moveTo(player.x + player.width / 2, player.y);
+      ctx.lineTo(player.x, player.y + player.height);
+      ctx.lineTo(player.x + player.width, player.y + player.height);
+      ctx.closePath();
+      ctx.fill();
+
+      // Thruster Flame
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.moveTo(player.x + player.width / 2 - 5, player.y + player.height);
+      ctx.lineTo(player.x + player.width / 2 + 5, player.y + player.height);
+      ctx.lineTo(player.x + player.width / 2, player.y + player.height + 10 + Math.random() * 5);
+      ctx.closePath();
+      ctx.fill();
+
+      // 4. Update & Draw Items
+      spawnItem();
+      items.forEach((item, index) => {
+        item.y += item.speed;
+
+        // Draw Item
+        if (item.isOrb) {
+          ctx.fillStyle = '#facc15';
+          ctx.beginPath();
+          ctx.arc(item.x, item.y, item.size, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(item.x - item.size / 2, item.y - item.size / 2, item.size, item.size);
+        }
+
+        // Collision Check with Player
+        const distX = Math.abs(item.x - (player.x + player.width / 2));
+        const distY = Math.abs(item.y - (player.y + player.height / 2));
+
+        if (distX < player.width / 2 + item.size / 2 && distY < player.height / 2 + item.size / 2) {
+          if (item.isOrb) {
+            score += 10;
+            scoreEl.innerText = score;
+            playTone(587.33, 'sine', 0.15); // High beep
+            addExplosion(item.x, item.y, '#facc15');
+            items.splice(index, 1);
+          } else {
+            playTone(150, 'sawtooth', 0.4); // Low crash sound
+            addExplosion(player.x + player.width / 2, player.y + player.height / 2, '#ef4444');
+            endGame();
+          }
+        }
+
+        // Remove Offscreen Items
+        if (item.y > canvas.height + 20) items.splice(index, 1);
+      });
+
+      // 5. Update & Draw Particles
+      particles.forEach((p, pIndex) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+        if (p.life <= 0) particles.splice(pIndex, 1);
+      });
+
+      if (gameActive) requestAnimationFrame(gameLoop);
+    }
+
+    // End Game Handler
+    function endGame() {
+      gameActive = false;
+
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('cosmic_high_score', highScore);
+        highScoreEl.innerText = highScore;
+      }
+
+      menuTitle.innerText = 'Game Over! 💥';
+      menuSub.innerHTML = `Your Score: <b>${score}</b><br>High Score: <b>${highScore}</b>`;
+      menuOverlay.style.display = 'flex';
+    }
+
+    // Initial Background Draw
+    createStars();
+  </script>
+</body>
+</html>
